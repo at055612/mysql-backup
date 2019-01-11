@@ -61,26 +61,29 @@ function uri_parser() {
 
     # component extraction
     full=${BASH_REMATCH[0]}
-		uri[uri]="$full"
-    uri[schema]=${BASH_REMATCH[2]}
-    uri[address]=${BASH_REMATCH[3]}
-    uri[user]=${BASH_REMATCH[5]}
-    uri[password]=${BASH_REMATCH[7]}
-    uri[host]=${BASH_REMATCH[8]}
-    uri[port]=${BASH_REMATCH[10]}
-    uri[path]=${BASH_REMATCH[11]}
-    uri[query]=${BASH_REMATCH[12]}
-    uri[fragment]=${BASH_REMATCH[13]}
-		if [[ ${uri[schema]} == "smb" && ${uri[path]} =~ ^/([^/]*)(/?.*)$ ]]; then
-			uri[share]=${BASH_REMATCH[1]}
-			uri[sharepath]=${BASH_REMATCH[2]}
-		fi
+    #shellcheck disable=SC2154
+    {
+      uri[uri]="$full"
+      uri[schema]=${BASH_REMATCH[2]}
+      uri[address]=${BASH_REMATCH[3]}
+      uri[user]=${BASH_REMATCH[5]}
+      uri[password]=${BASH_REMATCH[7]}
+      uri[host]=${BASH_REMATCH[8]}
+      uri[port]=${BASH_REMATCH[10]}
+      uri[path]=${BASH_REMATCH[11]}
+      uri[query]=${BASH_REMATCH[12]}
+      uri[fragment]=${BASH_REMATCH[13]}
+      if [[ ${uri[schema]} == "smb" && ${uri[path]} =~ ^/([^/]*)(/?.*)$ ]]; then
+        uri[share]=${BASH_REMATCH[1]}
+        uri[sharepath]=${BASH_REMATCH[2]}
+      fi
 
-		# does the user have a domain?
-		if [[ -n ${uri[user]} && ${uri[user]} =~ ^([^\;]+)\;(.+)$ ]]; then
-			uri[userdomain]=${BASH_REMATCH[1]}
-			uri[user]=${BASH_REMATCH[2]}
-		fi
+      # does the user have a domain?
+      if [[ -n ${uri[user]} && ${uri[user]} =~ ^([^\;]+)\;(.+)$ ]]; then
+        uri[userdomain]=${BASH_REMATCH[1]}
+        uri[user]=${BASH_REMATCH[2]}
+      fi
+    }
 		return 0
 }
 
@@ -101,24 +104,22 @@ function do_dump() {
   # backup file containing this db backup and a second tar file with the
   # contents of a wordpress install so they can be restored.
   if [ -d /scripts.d/pre-backup/ ]; then
-    for i in $(ls /scripts.d/pre-backup/*.sh); do
-      if [ -x $i ]; then
-        NOW=${now} DUMPFILE=${TMPDIR}/${TARGET} DUMPDIR=${TMPDIR} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} $i
+    for file in /scripts.d/pre-backup/*.sh; do
+      if [ -x "${file}" ]; then
+        NOW=${now} DUMPFILE=${TMPDIR}/${TARGET} DUMPDIR=${TMPDIR} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} "${file}"
       fi
     done
   fi
 
   # do the dump
-  workdir=/tmp/backup.$$
-  rm -rf $workdir
-  mkdir -p $workdir
+  workdir="$(mktemp -d)"
   # if we asked to do by schema, then we need to get a list of all of the databases, take each, and then tar and zip them
   if [ -n "$DB_DUMP_BY_SCHEMA" -a "$DB_DUMP_BY_SCHEMA" = "true" ]; then
     if [[ -z "$DB_NAMES" ]]; then
-      DB_NAMES=$(mysql -h $DB_SERVER -P $DB_PORT $DBUSER $DBPASS -N -e 'show databases')
+      DB_NAMES=$(mysql -h "${DB_SERVER}" -P "${DB_PORT}" "${DBUSER}" "${DBPASS}" -N -e 'show databases')
     fi
     for onedb in $DB_NAMES; do
-      mysqldump -h $DB_SERVER -P $DB_PORT $DBUSER $DBPASS --databases $onedb $DUMPVARS > $workdir/$onedb.sql
+      mysqldump -h "${DB_SERVER}" -P "${DB_PORT}" "${DBUSER}" "${DBPASS}" $DUMPVARS --databases "${onedb}" > "${workdir}/${onedb}.sql"
     done
   else
     # just a single command
@@ -127,7 +128,7 @@ function do_dump() {
     else
       DB_LIST="-A"
     fi
-    mysqldump -h $DB_SERVER -P $DB_PORT $DBUSER $DBPASS $DB_LIST $DUMPVARS > $workdir/backup.sql
+    mysqldump -h "${DB_SERVER}" -P "${DB_PORT}" "${DBUSER}" "${DBPASS}" $DUMPVARS ${DB_LIST} > "${workdir}/backup.sql"
   fi
   # package the .sql file(s) in a compressed tar file
   tar c -C "${workdir}" -f - . | "${COMPRESS}" > "${TMPDIR}/${SOURCE}"
@@ -136,9 +137,9 @@ function do_dump() {
   # backup file containing this db backup and a second tar file with the
   # contents of a wordpress install.
   if [ -d /scripts.d/post-backup/ ]; then
-    for i in $(ls /scripts.d/post-backup/*.sh); do
-      if [ -x $i ]; then
-        NOW=${now} DUMPFILE=${TMPDIR}/${SOURCE} DUMPDIR=${TMPDIR} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} $i
+    for file in /scripts.d/post-backup/*.sh; do
+      if [ -x "${file}" ]; then
+        NOW=${now} DUMPFILE=${TMPDIR}/${SOURCE} DUMPDIR=${TMPDIR} DB_DUMP_DEBUG=${DB_DUMP_DEBUG} ${file}
       fi
     done
   fi
@@ -173,20 +174,20 @@ function do_dump() {
 function backup_target() {
   local target=$1
   # determine target proto
-  uri_parser ${target}
+  uri_parser "${target}"
 
   # what kind of target do we have? Plain filesystem? smb?
   case "${uri[schema]}" in
     "file")
-      mkdir -p ${uri[path]}
+      mkdir -p "${uri[path]}"
       cpOpts="-a"
       [ -n "$DB_DUMP_KEEP_PERMISSIONS" -a "$DB_DUMP_KEEP_PERMISSIONS" = "false" ] && cpOpts=""
-      cp $cpOpts ${TMPDIR}/${SOURCE} ${uri[path]}/${TARGET}
+      cp $cpOpts "${TMPDIR}/${SOURCE}" "${uri[path]}/${TARGET}"
       ;;
     "s3")
       # allow for endpoint url override
       [[ -n "$AWS_ENDPOINT_URL" ]] && AWS_ENDPOINT_OPT="--endpoint-url $AWS_ENDPOINT_URL"
-      aws ${AWS_ENDPOINT_OPT} s3 cp ${TMPDIR}/${SOURCE} "${DB_DUMP_TARGET}/${TARGET}"
+      aws "${AWS_ENDPOINT_OPT}" s3 cp "${TMPDIR}/${SOURCE}" "${DB_DUMP_TARGET}/${TARGET}"
       ;;
     "smb")
       if [[ -n "$SMB_USER" ]]; then
